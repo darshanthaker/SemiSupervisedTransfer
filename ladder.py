@@ -6,6 +6,7 @@ import input_data
 import math
 import os
 import csv
+from pdb import set_trace
 from tqdm import tqdm
 
 class LadderNetwork(object):
@@ -29,8 +30,9 @@ class LadderNetwork(object):
     def bi(self, inits, size, name):
         return tf.Variable(inits * tf.ones([size]), name=name)
 
-    def wi(self, shape, name):
-        return tf.Variable(tf.random_normal(shape, name=name)) / math.sqrt(shape[0])
+    def wi(self, shape, name, scope="ladder_net"):
+        with tf.name_scope(scope):
+            return tf.Variable(tf.random_normal(shape, name=name)) / math.sqrt(shape[0])
 
     def batch_normalization(self, batch, mean=None, var=None):
         if mean is None or var is None:
@@ -151,7 +153,7 @@ class LadderNetwork(object):
         # Shapes of linear layers.
         shapes = zip(self.layer_sizes[:-1], self.layer_sizes[1:])
 
-        self.weights = {'W': [self.wi(s, "W") for s in shapes],  # Encoder weights
+        self.weights = {'W': [self.wi(s, "W", scope="transfer_weights") for s in shapes],  # Encoder weights
                    'V': [self.wi(s[::-1], "V") for s in shapes],  # Decoder weights
                    # batch normalization parameter to shift the normalized value
                    'beta': [self.bi(0.0, self.layer_sizes[l+1], "beta") for l in range(self.L)],
