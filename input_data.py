@@ -150,7 +150,7 @@ class SemiDataSet(object):
         y = numpy.array([numpy.arange(10)[l==1][0] for l in labels])
         idx = indices[y==0][:5]
         n_classes = y.max() + 1
-        n_from_each_class = n_labeled / n_classes
+        n_from_each_class = n_labeled // n_classes
         i_labeled = []
         for c in range(n_classes):
             i = indices[y==c][:n_from_each_class]

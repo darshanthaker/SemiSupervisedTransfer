@@ -6,8 +6,11 @@ import input_data
 import math
 import os
 import csv
+import sys
 from pdb import set_trace
 from tqdm import tqdm
+from util import eprint
+
 
 class LadderNetwork(object):
 
@@ -18,21 +21,25 @@ class LadderNetwork(object):
         self.batch_size = 100
         self.L = len(self.layer_sizes) - 1  # number of layers
         self.num_examples = 60000
-        #self.num_epochs = 150
-        self.num_epochs = 1
+        self.num_epochs = 150
         self.num_labeled = 100
         self.starter_learning_rate = 0.02
         self.decay_after = 15  # epoch after which to begin learning rate decay
-        self.num_iter = (self.num_examples/self.batch_size) * self.num_epochs  # number of loop iterations
+        self.num_iter = int((self.num_examples//self.batch_size) * self.num_epochs)  # number of loop iterations
 
         self.create_compute_graph()
 
-    def bi(self, inits, size, name):
-        return tf.Variable(inits * tf.ones([size]), name=name)
+    def bi(self, inits, size, name, scope="ladder_net"):
+        with tf.variable_scope(scope):
+            return tf.Variable(inits * tf.ones([size]), name=name)
 
     def wi(self, shape, name, scope="ladder_net"):
-        with tf.name_scope(scope):
-            return tf.Variable(tf.random_normal(shape, name=name)) / math.sqrt(shape[0])
+        with tf.variable_scope(scope):
+            return tf.Variable(tf.random_normal(shape, name=name), name=name)
+
+    def true_divide(self, var, shape, scope="ladder_net"):
+        with tf.variable_scope(scope):
+            return var / math.sqrt(shape[0])
 
     def batch_normalization(self, batch, mean=None, var=None):
         if mean is None or var is None:
@@ -57,7 +64,7 @@ class LadderNetwork(object):
         d['unlabeled'] = {'z': {}, 'm': {}, 'v': {}, 'h': {}}
         d['labeled']['z'][0], d['unlabeled']['z'][0] = self.split_lu(h)
         for l in range(1, self.L+1):
-            print "Layer ", l, ": ", self.layer_sizes[l-1], " -> ", self.layer_sizes[l]
+            eprint("Layer ", l, ": ", self.layer_sizes[l-1], " -> ", self.layer_sizes[l])
             d['labeled']['h'][l-1], d['unlabeled']['h'][l-1] = self.split_lu(h)
             z_pre = tf.matmul(h, self.weights['W'][l-1])  # pre-activation
             z_pre_l, z_pre_u = self.split_lu(z_pre)  # split labeled and unlabeled examples
@@ -100,6 +107,7 @@ class LadderNetwork(object):
                 h = tf.nn.softmax(self.weights['gamma'][l-1] * (z + self.weights["beta"][l-1]))
             else:
                 # use ReLU activation in hidden layers
+                set_trace()
                 h = tf.nn.relu(z + self.weights["beta"][l-1])
             d['labeled']['z'][l], d['unlabeled']['z'][l] = self.split_lu(z)
             d['unlabeled']['m'][l], d['unlabeled']['v'][l] = m, v  # save mean and variance of unlabeled examples for decoding
@@ -132,7 +140,7 @@ class LadderNetwork(object):
         z_est = {}
         self.d_cost = []  # to store the denoising cost of all layers
         for l in range(self.L, -1, -1):
-            print "Layer ", l, ": ", self.layer_sizes[l+1] if l+1 < len(self.layer_sizes) else None, " -> ", self.layer_sizes[l], ", denoising cost: ", self.denoising_cost[l]
+            eprint("Layer ", l, ": ", self.layer_sizes[l+1] if l+1 < len(self.layer_sizes) else None, " -> ", self.layer_sizes[l], ", denoising cost: ", self.denoising_cost[l])
             z, z_c = self.clean['unlabeled']['z'][l], self.corr['unlabeled']['z'][l]
             m, v = self.clean['unlabeled']['m'].get(l, 0), self.clean['unlabeled']['v'].get(l, 1-1e-10)
             if l == self.L:
@@ -151,14 +159,19 @@ class LadderNetwork(object):
         self.training = tf.placeholder(tf.bool)
 
         # Shapes of linear layers.
-        shapes = zip(self.layer_sizes[:-1], self.layer_sizes[1:])
+        shapes = list(zip(self.layer_sizes[:-1], self.layer_sizes[1:]))
 
-        self.weights = {'W': [self.wi(s, "W", scope="transfer_weights") for s in shapes],  # Encoder weights
+        self.weights = {'W_raw': [self.wi(s, "W", scope="transfer_weights") \
+                              for s in shapes],  # Encoder weights
                    'V': [self.wi(s[::-1], "V") for s in shapes],  # Decoder weights
                    # batch normalization parameter to shift the normalized value
-                   'beta': [self.bi(0.0, self.layer_sizes[l+1], "beta") for l in range(self.L)],
+                   'beta': [self.bi(0.0, self.layer_sizes[l+1], "beta", scope="transfer_weights") \
+                            for l in range(self.L)],
                    # batch normalization parameter to scale the normalized value
                    'gamma': [self.bi(1.0, self.layer_sizes[l+1], "beta") for l in range(self.L)]}
+
+        self.weights['W'] = [self.true_divide(w, s, scope="transfer_weights") \
+                             for (w, s) in zip(self.weights['W_raw'], shapes)]
 
         self.noise_std = 0.3  # scaling factor for noise used in corrupted encoder
 
@@ -178,13 +191,13 @@ class LadderNetwork(object):
         self.running_var = [tf.Variable(tf.constant(1.0, shape=[l]), trainable=False) for l in self.layer_sizes[1:]]
 
         
-        print "=== Corrupted Encoder ==="
+        eprint("=== Corrupted Encoder ===")
         self.y_c, self.corr = self.create_encoder(self.inputs, self.noise_std)
 
-        print "=== Clean Encoder ==="
+        eprint("=== Clean Encoder ===")
         self.y, self.clean = self.create_encoder(self.inputs, 0.0)  # 0.0 -> do not add noise
 
-        print "=== Decoder ==="
+        eprint("=== Decoder ===")
         self.create_decoder()
 
         # calculate total unsupervised cost by adding the denoising cost of all layers
@@ -208,12 +221,19 @@ class LadderNetwork(object):
             self.train_step = tf.group(bn_updates)
 
     def train(self):
-        print "===  Loading Data ==="
+        eprint("===  Loading Data ===")
         mnist = input_data.read_data_sets("MNIST_data", n_labeled=self.num_labeled, one_hot=True)
 
         saver = tf.train.Saver()
+        var_dict = dict()
+        for l in range(self.L):
+            var_dict[self.weights['W_raw'][l].name[:-2]] = self.weights['W_raw'][l]
+            var_dict[self.weights['beta'][l].name[:-2]] = self.weights['beta'][l]
+            
+        set_trace()
+        weights_saver = tf.train.Saver(var_dict)
 
-        print "===  Starting Session ==="
+        eprint("===  Starting Session ===")
         self.sess = tf.Session()
 
         i_iter = 0
@@ -223,39 +243,47 @@ class LadderNetwork(object):
             # if checkpoint exists, restore the parameters and set epoch_n and i_iter
             saver.restore(self.sess, ckpt.model_checkpoint_path)
             epoch_n = int(ckpt.model_checkpoint_path.split('-')[1])
-            i_iter = (epoch_n+1) * (self.num_examples/self.batch_size)
-            print "Restored Epoch ", epoch_n
+            i_iter = (epoch_n+1) * (self.num_examples//self.batch_size)
+            eprint("Restored Epoch ", epoch_n)
         else:
             # no checkpoint exists. create checkpoints directory if it does not exist.
             if not os.path.exists('checkpoints'):
                 os.makedirs('checkpoints')
+            if not os.path.exists('weight_checkpoints'):
+                os.makedirs('weight_checkpoints')
             init = tf.global_variables_initializer()
             self.sess.run(init)
 
-        print "=== Training ==="
-        print "Initial Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%"
+        eprint("=== Training ===")
+        eprint("Initial Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
 
         for i in tqdm(range(i_iter, self.num_iter)):
             images, labels = mnist.train.next_batch(self.batch_size)
             self.sess.run(self.train_step, feed_dict={self.inputs: images, self.outputs: labels, self.training: True})
-            if (i > 1) and ((i+1) % (self.num_iter/self.num_epochs) == 0):
-                epoch_n = i/(self.num_examples/self.batch_size)
+            if (i > 1) and ((i+1) % (self.num_iter//self.num_epochs) == 0):
+                epoch_n = i//(self.num_examples//self.batch_size)
                 if (epoch_n+1) >= self.decay_after:
                     # decay learning rate
                     # learning_rate = starter_learning_rate * ((num_epochs - epoch_n) / (num_epochs - decay_after))
                     ratio = 1.0 * (self.num_epochs - (epoch_n+1))  # epoch_n + 1 because learning rate is set for next epoch
                     ratio = max(0, ratio / (self.num_epochs - self.decay_after))
-                    sess.run(self.learning_rate.assign(self.starter_learning_rate * ratio))
+                    self.sess.run(self.learning_rate.assign(self.starter_learning_rate * ratio))
                 saver.save(self.sess, 'checkpoints/model.ckpt', epoch_n)
+                weights_saver.save(self.sess, "weight_checkpoints/weights.ckpt", epoch_n)
                 # print "Epoch ", epoch_n, ", Accuracy: ", sess.run(accuracy, feed_dict={inputs: mnist.test.images, outputs:mnist.test.labels, training: False}), "%"
-                with open('train_log', 'ab') as train_log:
+                with open('train_log', 'a') as train_log:
                     # write test accuracy to file "train_log"
                     train_log_w = csv.writer(train_log)
                     log_i = [epoch_n] + self.sess.run([self.accuracy], feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False})
                     train_log_w.writerow(log_i)
 
-        print "Final Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%"
+        
+        eprint("Final Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
         self.sess.close()
 
-ladder = LadderNetwork()
-ladder.train()
+def main():
+    ladder = LadderNetwork()
+    ladder.train()
+
+if __name__=="__main__":
+    main()
