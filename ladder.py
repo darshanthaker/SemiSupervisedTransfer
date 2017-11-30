@@ -107,7 +107,6 @@ class LadderNetwork(object):
                 h = tf.nn.softmax(self.weights['gamma'][l-1] * (z + self.weights["beta"][l-1]))
             else:
                 # use ReLU activation in hidden layers
-                set_trace()
                 h = tf.nn.relu(z + self.weights["beta"][l-1])
             d['labeled']['z'][l], d['unlabeled']['z'][l] = self.split_lu(z)
             d['unlabeled']['m'][l], d['unlabeled']['v'][l] = m, v  # save mean and variance of unlabeled examples for decoding
@@ -230,7 +229,6 @@ class LadderNetwork(object):
             var_dict[self.weights['W_raw'][l].name[:-2]] = self.weights['W_raw'][l]
             var_dict[self.weights['beta'][l].name[:-2]] = self.weights['beta'][l]
             
-        set_trace()
         weights_saver = tf.train.Saver(var_dict)
 
         eprint("===  Starting Session ===")
@@ -257,9 +255,11 @@ class LadderNetwork(object):
         eprint("=== Training ===")
         eprint("Initial Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
 
-        for i in tqdm(range(i_iter, self.num_iter)):
+        for i in range(i_iter, self.num_iter):
             images, labels = mnist.train.next_batch(self.batch_size)
             self.sess.run(self.train_step, feed_dict={self.inputs: images, self.outputs: labels, self.training: True})
+            if i % 10 == 0:
+                eprint("[{}] Test Accuracy: ".format(i), self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
             if (i > 1) and ((i+1) % (self.num_iter//self.num_epochs) == 0):
                 epoch_n = i//(self.num_examples//self.batch_size)
                 if (epoch_n+1) >= self.decay_after:

@@ -3,6 +3,7 @@ from __future__ import print_function
 import gzip
 import os
 import urllib
+from pdb import set_trace
 
 import numpy
 
@@ -72,7 +73,7 @@ def extract_labels(filename, one_hot=False):
 
 class DataSet(object):
 
-  def __init__(self, images, labels, fake_data=False):
+  def __init__(self, images, labels, fake_data=False, flatten=True):
     if fake_data:
       self._num_examples = 10000
     else:
@@ -84,8 +85,9 @@ class DataSet(object):
       # Convert shape from [num examples, rows, columns, depth]
       # to [num examples, rows*columns] (assuming depth == 1)
       assert images.shape[3] == 1
-      images = images.reshape(images.shape[0],
-                              images.shape[1] * images.shape[2])
+      if flatten:
+        images = images.reshape(images.shape[0],
+                                images.shape[1] * images.shape[2])
       # Convert from [0, 255] -> [0.0, 1.0].
       images = images.astype(numpy.float32)
       images = numpy.multiply(images, 1.0 / 255.0)
@@ -135,11 +137,11 @@ class DataSet(object):
     return self._images[start:end], self._labels[start:end]
 
 class SemiDataSet(object):
-    def __init__(self, images, labels, n_labeled):
+    def __init__(self, images, labels, n_labeled, flatten=True):
         self.n_labeled = n_labeled
 
         # Unlabled DataSet
-        self.unlabeled_ds = DataSet(images, labels)
+        self.unlabeled_ds = DataSet(images, labels, flatten=flatten)
 
         # Labeled DataSet
         self.num_examples = self.unlabeled_ds.num_examples
@@ -157,7 +159,7 @@ class SemiDataSet(object):
             i_labeled += list(i)
         l_images = images[i_labeled]
         l_labels = labels[i_labeled]
-        self.labeled_ds = DataSet(l_images, l_labels)
+        self.labeled_ds = DataSet(l_images, l_labels, flatten=flatten)
 
     def next_batch(self, batch_size):
         unlabeled_images, _ = self.unlabeled_ds.next_batch(batch_size)
@@ -168,7 +170,7 @@ class SemiDataSet(object):
         images = numpy.vstack([labeled_images, unlabeled_images])
         return images, labels
 
-def read_data_sets(train_dir, n_labeled = 100, fake_data=False, one_hot=False):
+def read_data_sets(train_dir, n_labeled = 100, fake_data=False, one_hot=False, flatten=True):
   class DataSets(object):
     pass
   data_sets = DataSets()
@@ -193,17 +195,19 @@ def read_data_sets(train_dir, n_labeled = 100, fake_data=False, one_hot=False):
 
   local_file = maybe_download(TEST_IMAGES, train_dir)
   test_images = extract_images(local_file)
+  test_images = test_images[:3000, :, :, :]
 
   local_file = maybe_download(TEST_LABELS, train_dir)
   test_labels = extract_labels(local_file, one_hot=one_hot)
+  test_labels = test_labels[:3000, :]
 
   validation_images = train_images[:VALIDATION_SIZE]
   validation_labels = train_labels[:VALIDATION_SIZE]
   train_images = train_images[VALIDATION_SIZE:]
   train_labels = train_labels[VALIDATION_SIZE:]
 
-  data_sets.train = SemiDataSet(train_images, train_labels, n_labeled)
-  data_sets.validation = DataSet(validation_images, validation_labels)
-  data_sets.test = DataSet(test_images, test_labels)
+  data_sets.train = SemiDataSet(train_images, train_labels, n_labeled, flatten=flatten)
+  data_sets.validation = DataSet(validation_images, validation_labels, flatten=flatten)
+  data_sets.test = DataSet(test_images, test_labels, flatten=flatten)
 
   return data_sets
