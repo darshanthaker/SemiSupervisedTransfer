@@ -211,3 +211,45 @@ def read_data_sets(train_dir, n_labeled = 100, fake_data=False, one_hot=False, f
   data_sets.test = DataSet(test_images, test_labels, flatten=flatten)
 
   return data_sets
+
+def sl_read_data_sets(train_dir, n_labeled = 100, fake_data=False, one_hot=False, flatten=True):
+  class DataSets(object):
+    pass
+  data_sets = DataSets()
+
+  if fake_data:
+    data_sets.train = DataSet([], [], fake_data=True)
+    data_sets.validation = DataSet([], [], fake_data=True)
+    data_sets.test = DataSet([], [], fake_data=True)
+    return data_sets
+
+  TRAIN_IMAGES = 'train-images-idx3-ubyte.gz'
+  TRAIN_LABELS = 'train-labels-idx1-ubyte.gz'
+  TEST_IMAGES = 't10k-images-idx3-ubyte.gz'
+  TEST_LABELS = 't10k-labels-idx1-ubyte.gz'
+  VALIDATION_SIZE = 0
+
+  local_file = maybe_download(TRAIN_IMAGES, train_dir)
+  train_images = extract_images(local_file)
+
+  local_file = maybe_download(TRAIN_LABELS, train_dir)
+  train_labels = extract_labels(local_file, one_hot=one_hot)
+
+  local_file = maybe_download(TEST_IMAGES, train_dir)
+  test_images = extract_images(local_file)
+  test_images = test_images[:3000, :, :, :]
+
+  local_file = maybe_download(TEST_LABELS, train_dir)
+  test_labels = extract_labels(local_file, one_hot=one_hot)
+  test_labels = test_labels[:3000]
+
+  validation_images = train_images[:VALIDATION_SIZE]
+  validation_labels = train_labels[:VALIDATION_SIZE]
+  train_images = train_images[VALIDATION_SIZE:]
+  train_labels = train_labels[VALIDATION_SIZE:]
+
+  data_sets.train = DataSet(train_images, train_labels, flatten=flatten)
+  data_sets.validation = DataSet(validation_images, validation_labels, flatten=flatten)
+  data_sets.test = DataSet(test_images, test_labels, flatten=flatten)
+
+  return data_sets

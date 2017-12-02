@@ -50,7 +50,7 @@ class ConvLadderNetwork(object):
         self.num_examples = 60000
         self.num_epochs = 150
         self.num_labeled = 100
-        self.starter_learning_rate = 0.02
+        self.starter_learning_rate = 0.0002
         self.decay_after = 15  # epoch after which to begin learning rate decay
         self.num_iter = int((self.num_examples//self.batch_size) * self.num_epochs)  # number of loop iterations
 
@@ -169,8 +169,8 @@ class ConvLadderNetwork(object):
         u = tf.contrib.layers.batch_norm(u, is_training=False) 
         z_est = self.g_gauss(z_c, u, 10)
         z_est_bn = (z_est - m) / v
-        self.d_cost.append((tf.reduce_mean(tf.reduce_sum(tf.square(z_est_bn - z), 1)) / \
-            10))
+        self.d_cost.append((tf.reduce_mean(tf.reduce_sum(\
+            tf.square(z_est_bn - z), 1)) / 10) * 0.01)
 
     def create_compute_graph(self):
         self.inputs = tf.placeholder(tf.float32, shape=(None, 28, 28, 1))
@@ -178,7 +178,7 @@ class ConvLadderNetwork(object):
         self.training = tf.placeholder(tf.bool)
 
 
-        self.weights = {'W_raw': [self.wi((10, 10), "W", scope="transfer_weights")], \
+        self.weights = {'W_raw': [self.wi((10, 10), "W")], \
                         'beta': {k : self.bi(0.0, v[0], "beta", scope="transfer_weights") \
                                  for (k, v) in self.conv_params.items()},
                         'gamma': {8: self.bi(1.0, 10, "gamma")}}
@@ -193,12 +193,12 @@ class ConvLadderNetwork(object):
         self.flat_unlabeled = lambda x: tf.slice(x, [self.batch_size, 0], [-1, -1]) if x is not None else x
         self.flat_split_lu = lambda x: (self.flat_labeled(x), self.flat_unlabeled(x))
 
-        self.noise_std = 0.6
+        self.noise_std = 0.3
         eprint("=== Corrupted Encoder ===")
         self.y_c, self.corr, _ = self.create_encoder(self.inputs, self.noise_std)
 
         eprint("=== Clean Encoder ===")
-        self.y, self.clean, self.swag = self.create_encoder(self.inputs, 0.0)
+        self.y, self.clean, _ = self.create_encoder(self.inputs, 0.0)
 
         eprint("=== Decoder ===")
         self.create_decoder()
@@ -208,6 +208,7 @@ class ConvLadderNetwork(object):
         self.y_N = self.flat_labeled(self.y_c)
         self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs*tf.log(self.y_N), 1))  # supervised cost
         self.loss = self.cost + self.u_cost  # total cost
+        #self.loss = self.cost
 
         self.pred_cost = -tf.reduce_mean(tf.reduce_sum(self.outputs*tf.log(self.y), 1))  # cost used for prediction
 
@@ -218,16 +219,34 @@ class ConvLadderNetwork(object):
         self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, "float")) * tf.constant(100.0)
 
         self.learning_rate = tf.Variable(self.starter_learning_rate, trainable=False)
-        self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #bounds = [30, 200, 300]
+        #values = [1e-2, 1e-3, 1e-4, 1e-5]
+        #self.step_op = tf.Variable(0, name='step', trainable=False)
+        self.step_op = None
+        #self.lr = tf.train.piecewise_constant(self.step_op, bounds, values)
+        self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, global_step=self.step_op)
 
     def train(self):
         eprint("===  Loading Data ===")
         mnist = input_data.read_data_sets("MNIST_data", n_labeled=self.num_labeled, one_hot=True, flatten=False)
 
-        saver = tf.train.Saver()
+        var_dict = dict()
+        for k in self.conv_params.keys():
+            var_dict[self.weights['beta'][k].name[:-2]] = self.weights['beta'][k]
+        var_dict[self.weights['beta'][8].name[:-2]] = self.weights['beta'][8]
+
+        conv_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "conv")
+        fc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "fc")
+        for c in conv_vars:
+            var_dict[c.name[:-2]] = c
+        for f in fc_vars:
+            var_dict[f.name[:-2]] = f
+         
+        saver = tf.train.Saver(var_dict)
 
         eprint("===  Starting Session ===")
         self.sess = tf.Session()
+        self.sess.run(tf.global_variables_initializer())
 
         i_iter = 0
 
@@ -247,18 +266,20 @@ class ConvLadderNetwork(object):
 
         eprint("=== Training ===")
         eprint("Initial Accuracy: ", self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
-
+        losses = list()
         for i in range(i_iter, self.num_iter):
             images, labels = mnist.train.next_batch(self.batch_size)
-            lr, acc, u_loss, s_loss, _ = self.sess.run([self.learning_rate, self.train_accuracy, self.u_cost, self.cost, self.train_step], feed_dict={self.inputs: images, self.outputs: labels, self.training: True})
-            eprint("[{}] Learning Rate: {}, Train Accuracy: {}, Unsupervised Loss: {}, Supervised Loss: {}".format(i, lr, acc, u_loss, s_loss))
+            acc, loss, _ = self.sess.run([self.train_accuracy, self.loss, self.train_step], feed_dict={self.inputs: images, self.outputs: labels, self.training: True})
+            losses.append(loss)
+            #eprint("[{}] Learning Rate: {}, Train Accuracy: {}, Unsupervised Loss: {}, Supervised Loss: {}".format(i, lr, acc, u_loss, s_loss))
             if i % 10 == 0:
-                eprint("[{}] Test Accuracy: ".format(i), self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
+                eprint("[{}] Loss = {}, Test Accuracy: ".format(i, np.mean(losses)), self.sess.run(self.accuracy, feed_dict={self.inputs: mnist.test.images, self.outputs: mnist.test.labels, self.training: False}), "%")
+                losses = list()
             if (i > 1) and ((i+1) % (self.num_iter//self.num_epochs) == 0):
                 epoch_n = i//(self.num_examples//self.batch_size)
                 if (epoch_n+1) >= self.decay_after:
                     # decay learning rate
-                    # learning_rate = starter_learning_rate * ((num_epochs - epoch_n) / (num_epochs - decay_after))
+                    learning_rate = starter_learning_rate * ((num_epochs - epoch_n) / (num_epochs - decay_after))
                     ratio = 1.0 * (self.num_epochs - (epoch_n+1))  # epoch_n + 1 because learning rate is set for next epoch
                     ratio = max(0, ratio / (self.num_epochs - self.decay_after))
                     self.sess.run(self.learning_rate.assign(self.starter_learning_rate * ratio))

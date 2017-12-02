@@ -7,6 +7,8 @@ from datetime import datetime
 
 def eprint(*args, **kwargs):
     print(str(datetime.now().strftime('%H:%M:%S')),":", *args, file=sys.stderr, **kwargs)
+    sys.stderr.flush()
+    sys.stdout.flush()
 
 def parse_svhn(path):
     mat = scipy.io.loadmat(path)
