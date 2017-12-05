@@ -1,5 +1,8 @@
 import sys
+import argparse
 import scipy.io
+import pickle
+import os
 import numpy as np
 from skimage.io import imread
 from pdb import set_trace
@@ -10,11 +13,31 @@ def eprint(*args, **kwargs):
     sys.stderr.flush()
     sys.stdout.flush()
 
+def mkdir(path):
+    os.system("mkdir -p {}".format(path))
+
+def serialize(lst, dir_name, name):
+    with open(dir_name + '/' + name, 'wb') as fp:
+        pickle.dump(lst, fp)
+
+def load_file(dir_name, name):
+    with open(dir_name + '/' + name, 'rb') as fp:
+        lst = pickle.load(fp)
+        return lst 
+
 def parse_svhn(path):
     mat = scipy.io.loadmat(path)
     X = mat['X']
     y = mat['y'][:, 0]
     return X, y
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 class InputLoader(object):
 

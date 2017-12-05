@@ -44,13 +44,13 @@ class ConvLadderNetwork(object):
                             5: (128, [3, 3]), \
                             6: (10, [1, 1])}
         self.fc_params = {8: 10}
-        self.flattened = [False, False, False, False, False, False, False, True, True]
+        self.flattened = [False, False, False, False, False, False, False, False, True]
         self.h_flattened = [False, False, False, False, False, False, False, False, True]
         self.batch_size = 100
         self.num_examples = 60000
         self.num_epochs = 150
         self.num_labeled = 100
-        self.starter_learning_rate = 0.0002
+        self.starter_learning_rate = 0.00002
         self.decay_after = 15  # epoch after which to begin learning rate decay
         self.num_iter = int((self.num_examples//self.batch_size) * self.num_epochs)  # number of loop iterations
 
@@ -116,8 +116,8 @@ class ConvLadderNetwork(object):
                     scope="conv{}".format(l), reuse=reuse)
             elif layer_type == 'maxpool':
                 z_pre = pool_layer(h, 'max')
-            elif layer_type == 'avgpool':
-                z_pre = pool_layer(h, 'avg')
+            #elif layer_type == 'avgpool':
+            #    z_pre = pool_layer(h, 'avg')
             elif layer_type == 'fc':
                 h = tf.contrib.layers.flatten(h)
                 z_pre = fc_layer(h, self.fc_params[l], \
@@ -136,6 +136,8 @@ class ConvLadderNetwork(object):
                 h = tf.nn.relu(z + self.weights["beta"][l])
             elif layer_type == 'fc':
                 h = tf.nn.softmax(self.weights['gamma'][l] * (z + self.weights['beta'][l]))
+            else:
+                h = z
         d['labeled']['h'][self.L + 1], d['unlabeled']['h'][self.L + 1] = self.flat_split_lu(h)
         return h, d, debug_z
 
@@ -163,8 +165,8 @@ class ConvLadderNetwork(object):
     # Decoder.
     def create_decoder(self):
         self.d_cost = []
-        z, z_c = self.clean['unlabeled']['z'][self.L], self.corr['unlabeled']['z'][self.L]
-        m, v = self.clean['unlabeled']['m'].get(self.L, 0), self.clean['unlabeled']['v'].get(self.L, 1-1e-10)
+        z, z_c = self.clean['unlabeled']['z'][self.L + 1], self.corr['unlabeled']['z'][self.L + 1]
+        m, v = self.clean['unlabeled']['m'].get(self.L + 1, 0), self.clean['unlabeled']['v'].get(self.L + 1, 1-1e-10)
         u = self.flat_unlabeled(self.y_c)
         u = tf.contrib.layers.batch_norm(u, is_training=False) 
         z_est = self.g_gauss(z_c, u, 10)
@@ -208,7 +210,7 @@ class ConvLadderNetwork(object):
         self.y_N = self.flat_labeled(self.y_c)
         self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs*tf.log(self.y_N), 1))  # supervised cost
         self.loss = self.cost + self.u_cost  # total cost
-        #self.loss = self.cost
+        self.loss = self.cost
 
         self.pred_cost = -tf.reduce_mean(tf.reduce_sum(self.outputs*tf.log(self.y), 1))  # cost used for prediction
 
@@ -219,12 +221,13 @@ class ConvLadderNetwork(object):
         self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, "float")) * tf.constant(100.0)
 
         self.learning_rate = tf.Variable(self.starter_learning_rate, trainable=False)
-        #bounds = [30, 200, 300]
-        #values = [1e-2, 1e-3, 1e-4, 1e-5]
-        #self.step_op = tf.Variable(0, name='step', trainable=False)
-        self.step_op = None
-        #self.lr = tf.train.piecewise_constant(self.step_op, bounds, values)
-        self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, global_step=self.step_op)
+        bounds = [30, 200, 300]
+        values = [1e-2, 1e-3, 1e-4, 1e-5]
+        self.step_op = tf.Variable(0, name='step', trainable=False)
+        #self.step_op = None
+        self.lr = tf.train.piecewise_constant(self.step_op, bounds, values)
+        self.train_step = tf.train.AdamOptimizer(self.lr).minimize(self.loss, global_step=self.step_op)
+        #self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, global_step=self.step_op)
 
     def train(self):
         eprint("===  Loading Data ===")
